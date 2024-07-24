@@ -1,0 +1,248 @@
+---
+title: "API conversion to excel"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Install and load required libraries
+if (!require("jsonlite")) install.packages("jsonlite", dependencies = TRUE)
+if (!require("openxlsx")) install.packages("openxlsx", dependencies = TRUE)
+if (!require("plyr")) install.packages("plyr", dependencies = TRUE)
+if (!require("dplyr")) install.packages("dplyr", dependencies = TRUE)
+if (!require("lubridate")) install.packages("lubridate", dependencies = TRUE)
+if (!require("xml2")) install.packages("xml2", dependencies = TRUE)
+library(jsonlite)
+library(openxlsx)
+library(plyr)
+library(dplyr)
+library(lubridate)
+library(xml2)
+
+# Function to flatten JSON data for combined dataset
+flatten_json <- function(json_data) {
+  results <- json_data$results
+  flat_list <- lapply(results, function(item) {
+    metadata <- item$metadata
+    
+    # Ensure all expected fields are present, set to NA if missing
+    fields <- c("apiVersion", "reference", "url", "title", "contentType", "language", 
+                "databaseLabel", "database", "summary", "weight", "groupById", "content", 
+                "accessRestriction")
+    item_data <- sapply(fields, function(field) ifelse(is.null(item[[field]]), NA, item[[field]]))
+    
+    # Convert metadata to a consistent data frame, ensuring all lists are flattened correctly
+    flat_metadata <- lapply(metadata, function(x) {
+      if (is.list(x)) {
+        return(paste(unlist(x), collapse = ", "))
+      } else {
+        return(x)
+      }
+    })
+    
+    # Ensure flat_metadata is a data frame
+    flat_metadata_df <- as.data.frame(flat_metadata, stringsAsFactors = FALSE)
+    
+    # Combine item data and metadata
+    combined_data <- cbind(data.frame(as.list(item_data), stringsAsFactors = FALSE), flat_metadata_df)
+    
+    # Truncate long text fields if they exist
+    text_fields <- c("description", "content")
+    for (field in text_fields) {
+      if (field %in% colnames(combined_data)) {
+        combined_data[[field]] <- ifelse(!is.na(combined_data[[field]]) & nchar(combined_data[[field]]) > 32767, 
+                                         substr(combined_data[[field]], 1, 32767), combined_data[[field]])
+      }
+    }
+    
+    return(combined_data)
+  })
+  
+  # Combine all data frames into one
+  flat_df <- do.call(rbind.fill, flat_list)
+  return(flat_df)
+}
+```
+
+INSERT THE PATH TO THE SEACRH FILES HERE
+```{r setup, include=FALSE}
+# Paths to JSON files
+json_files <- list(
+  "response1.json" = "/Users/arinazhuravleva/API innova/response1.json",
+  "response2.json" = "/Users/arinazhuravleva/API innova/response2.json",
+  "response3.json" = "/Users/arinazhuravleva/API innova/response3.json"
+)
+
+```
+
+```{r setup, include=FALSE}
+# Initialize an empty data frame to hold combined data
+combined_data_frame <- data.frame()
+
+# Process each JSON file and combine data
+for (json_file in json_files) {
+  #cat("Processing file:", json_file, "\n")
+  # Read the JSON file
+  json_data <- fromJSON(json_file, simplifyVector = FALSE)
+  
+  # Debugging step
+  #cat("Structure of JSON data:\n")
+  #str(json_data)
+  
+  # Convert JSON to a data frame
+  data_frame <- flatten_json(json_data)
+  
+  
+  # Replace NA values with "NA" for Excel compatibility
+  data_frame[is.na(data_frame)] <- "NA"
+  
+  # Combine with the main data frame
+  combined_data_frame <- rbind.fill(combined_data_frame, data_frame)
+}
+
+
+
+# Function to process facet data
+process_facet <- function(facet) {
+  data_frame <- data.frame(
+    RawValue = sapply(facet$values, function(x) x$rawValue),
+    Value = sapply(facet$values, function(x) x$value),
+    stringsAsFactors = FALSE
+  )
+  return(data_frame)
+}
+```
+
+INSERT THE PATH TO THE FACET FILE HERE
+```{r setup, include=FALSE}
+# Read and process the facet JSON file
+facet_json_file <- "/Users/arinazhuravleva/API innova/responsefacet.json"
+facet_json_data <- fromJSON(facet_json_file, simplifyVector = FALSE)
+```
+
+```{r setup, include=FALSE}
+# Create a mapping from raw values to actual values for each facet
+facet_mappings <- list()
+for (facet in facet_json_data$facets) {
+  facet_name <- facet$name
+  facet_data_frame <- process_facet(facet)
+  facet_mappings[[facet_name]] <- facet_data_frame
+}
+
+ # Debugging step
+#cat("Facet mappings:\n")
+#print(facet_mappings)
+
+# Function to substitute values in the combined data frame
+substitute_values <- function(df, mappings) {
+  for (col in colnames(df)) {
+    if (col %in% names(mappings)) {
+      cat("Substituting values in column:", col, "\n")
+      mapping_df <- mappings[[col]]
+      df[[col]] <- sapply(df[[col]], function(val) {
+        if (!is.na(val) && !is.null(val)) {
+          # Split the cell value by comma, substitute each part, then recombine
+          val_parts <- unlist(strsplit(val, ",\\s*"))
+          cat("Original parts:", val_parts, "\n")  # Debugging print statement
+          substituted_parts <- sapply(val_parts, function(part) {
+            if (part %in% mapping_df$RawValue) {
+              substituted_value <- mapping_df$Value[mapping_df$RawValue == part]
+              cat("Substituting", part, "with", substituted_value, "\n")  # Debugging print statement
+              return(substituted_value)
+            } else {
+              return(part)
+            }
+          })
+          return(paste(substituted_parts, collapse = "; "))
+        } else {
+          return(val)
+        }
+      })
+    }
+  }
+  return(df)
+}
+
+# Substitute values in the combined data frame
+combined_data_frame <- substitute_values(combined_data_frame, facet_mappings)
+
+# Keep only the specified columns
+desired_columns <- c("programmeDivision", "destination", "destinationGroup", "callTitle", "identifier", "content", 
+                     "typesOfAction", "budget", "deadlineModel", "startDate", "deadlineDate", "description", "type", "url", "crossCuttingPriorities", "keywords", "frameworkProgramme", "missionGroup")
+combined_data_frame <- combined_data_frame[, desired_columns]
+
+
+# Rename and create new columns
+combined_data_frame <- within(combined_data_frame, {
+  cluster <- programmeDivision
+  destination <- ifelse(grepl("^[0-9]+$", destination), destinationGroup, destination)
+  call <- ifelse(is.na(callTitle) | callTitle == "NA", gsub("Destination:", "", destinationGroup), callTitle)
+  whole_name <- paste(identifier, content)
+  topic_id <- identifier
+  topic <- content
+  stages <- deadlineModel
+  opening <- startDate
+  deadline <- deadlineDate
+  type_of_funding <- type
+  crosscutting_priorities <- crossCuttingPriorities
+  framework_programme <- frameworkProgramme
+  mission <- missionGroup
+  types_of_action <- typesOfAction
+})
+
+# Modify the url column
+modify_url <- function(url) {
+  url <- tolower(url)
+  url <- gsub("/data/topicdetails/", "/portal/screen/opportunities/topic-details/", url)
+  url <- gsub(".json$", "", url)
+  return(url)
+}
+
+combined_data_frame$url <- sapply(combined_data_frame$url, modify_url)
+
+# Format the date columns
+format_date <- function(date_str) {
+  parsed_date <- parse_date_time(date_str, orders = c("ymd_HMSz", "ymd_HMS", "ymd"))
+  if (!is.na(parsed_date)) {
+    return(format(parsed_date, "%d.%m.%Y"))
+  } else {
+    return(NA)
+  }
+}
+
+combined_data_frame$opening <- sapply(combined_data_frame$opening, format_date)
+combined_data_frame$deadline <- sapply(combined_data_frame$deadline, format_date)
+
+# Convert HTML content to plain text
+html_to_text <- function(html_string) {
+  if (!is.na(html_string) && html_string != "NA" && nchar(html_string) > 0) {
+    return(xml_text(read_html(html_string)))
+  } else {
+    return(html_string)
+  }
+}
+
+# Replace NA in description with "NA" and convert HTML to text
+combined_data_frame$description <- ifelse(is.na(combined_data_frame$description), "NA", combined_data_frame$description)
+combined_data_frame$description <- sapply(combined_data_frame$description, html_to_text)
+
+# Replace any remaining empty cells with "NA"
+
+combined_data_frame[combined_data_frame == ""] <- "NA"
+
+# Select and order the final columns
+final_columns <- c("mission", "cluster", "destination", "call", "whole_name", "topic_id", "topic","crosscutting_priorities", "budget", "stages", "opening", "deadline", "description","keywords", "type_of_funding", "types_of_action", "framework_programme", "url")
+combined_data_frame <- combined_data_frame %>%
+  select(all_of(final_columns))
+
+# Write the final combined data frame to an Excel file
+output_file_path <- "output_combined.xlsx"
+wb <- createWorkbook()
+addWorksheet(wb, "Combined Data")
+writeData(wb, "Combined Data", combined_data_frame)
+saveWorkbook(wb, output_file_path, overwrite = TRUE)
+combined_data_frame$url
+
+#confirmation message
+#cat("JSON content successfully converted and saved to", output_file_path, "\n")
+
+```
