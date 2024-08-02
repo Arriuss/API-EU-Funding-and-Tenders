@@ -67,9 +67,9 @@ INSERT THE PATH TO THE SEACRH FILES HERE
 ```{r setup, include=FALSE}
 # Paths to JSON files
 json_files <- list(
-  "response1.json" = "/Users/arinazhuravleva/API innova/response1.json",
-  "response2.json" = "/Users/arinazhuravleva/API innova/response2.json",
-  "response3.json" = "/Users/arinazhuravleva/API innova/response3.json"
+  "response1.json" = "~/API  Output/response1.json",
+  "response2.json" = "~/API  Output/response2.json",
+  "response3.json" = "~/API  Output/response3.json"
 )
 
 ```
@@ -115,7 +115,7 @@ process_facet <- function(facet) {
 INSERT THE PATH TO THE FACET FILE HERE
 ```{r setup, include=FALSE}
 # Read and process the facet JSON file
-facet_json_file <- "/Users/arinazhuravleva/API innova/responsefacet.json"
+facet_json_file <- "~/API  Output/facetresponse.json"
 facet_json_data <- fromJSON(facet_json_file, simplifyVector = FALSE)
 ```
 
